@@ -698,7 +698,7 @@
                 'col-department': ['学部', '学科', 'Department', '専攻'],
                 'col-major': ['文理', '文系理系', '専攻区分', 'Major'],
                 'col-gender': ['性別', 'Gender', '男女'],
-                'col-graduate': ['大学生/大学院', '学部/大学院', '課程', 'Graduate']
+                'col-graduate': ['大学生/大学院', '学部/大学院', '学校区分', 'Graduate']
             };
             
             for (const [selectId, keywords] of Object.entries(mappings)) {
@@ -835,7 +835,7 @@
         // プレビューテーブル表示
         function displayPreviewTable() {
             let html = '<table class="preview-table">';
-            html += '<thead><tr><th>氏名</th><th>大学</th><th>学部</th><th>文理</th><th>性別</th><th>課程</th></tr></thead>';
+            html += '<thead><tr><th>氏名</th><th>大学</th><th>学部</th><th>文理</th><th>性別</th><th>学校区分</th></tr></thead>';
             html += '<tbody>';
             
             const displayCount = Math.min(10, students.length);
@@ -1507,9 +1507,11 @@
                 maxUniversityPerGroup: CONFIG.maxUniversityPerGroup
             };
             const configJSON = JSON.stringify(configData);
+            // 元データのヘッダー情報も渡す
+            const headersJSON = JSON.stringify(headers);
             
             // Blob APIを使用してHTMLファイルを生成
-            const blob = new Blob([generateEditableHTML(groupsJSON, configJSON)], { type: 'text/html;charset=utf-8' });
+            const blob = new Blob([generateEditableHTML(groupsJSON, configJSON, headersJSON)], { type: 'text/html;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -1519,7 +1521,7 @@
         }
         
         // 編集可能なHTMLを生成（修正版）
-        function generateEditableHTML(groupsJSON, configJSON) {
+        function generateEditableHTML(groupsJSON, configJSON, headersJSON) {
             // HTMLファイル全体を文字列として構築
             const html = `<!DOCTYPE html>
 <html lang="ja">
@@ -1591,6 +1593,7 @@
         // データの初期化
         let groups = ${groupsJSON};
         const CONFIG = ${configJSON};
+        const headers = ${headersJSON};
         let moveHistory = [];
         let draggedStudent = null;
         let sourceGroup = null;
@@ -1821,23 +1824,43 @@
             const summaryWS = XLSX.utils.aoa_to_sheet(summaryData);
             XLSX.utils.book_append_sheet(wb, summaryWS, 'サマリー');
             
-            // 詳細シート
-            const detailData = [
-                ['グループ', '氏名', '大学', '学部', '文理', '性別', '課程']
-            ];
+            // 詳細シート（元データの全列を含む）
+            const detailData = [['グループ']];
             
+            // 元データのヘッダーを追加
+            if (headers && headers.length > 0) {
+                headers.forEach(header => {
+                    detailData[0].push(header);
+                });
+            } else {
+                // ヘッダー情報がない場合は基本情報のみ
+                detailData[0].push('氏名', '大学', '学部', '文理', '性別', '学校区分');
+            }
+            
+            // 学生データを追加
             for (let i = 0; i < CONFIG.groupCount; i++) {
                 const group = groups[i];
                 group.students.forEach(student => {
-                    detailData.push([
-                        'グループ' + (i + 1),
-                        student.name,
-                        student.university || '',
-                        student.department || '',
-                        student.major === '理' ? '理系' : '文系',
-                        student.gender === '女' ? '女性' : '男性',
-                        student.isGraduate ? '大学院' : '大学生'
-                    ]);
+                    const row = ['グループ' + (i + 1)];
+                    
+                    // originalDataがある場合はそれを使用
+                    if (student.originalData && student.originalData.length > 0) {
+                        student.originalData.forEach(cell => {
+                            row.push(cell);
+                        });
+                    } else {
+                        // originalDataがない場合は基本情報のみ
+                        row.push(
+                            student.name,
+                            student.university || '',
+                            student.department || '',
+                            student.major === '理' ? '理系' : '文系',
+                            student.gender === '女' ? '女性' : '男性',
+                            student.isGraduate ? '大学院' : '大学生'
+                        );
+                    }
+                    
+                    detailData.push(row);
                 });
             }
             
