@@ -907,6 +907,11 @@
             // ステップ1: グループごとの目標人数
             const groupTargetSizes = calculateGroupSizes(students.length, CONFIG.groupCount);
             
+            // ステップ1.5: 早稲田大学と慶應大学の学生を優先的に均等配分
+            addDebugLog('STEP1.5', '早稲田大学・慶應大学の優先配分を開始');
+            allocatePriorityUniversities(tracker, groupTargetSizes);
+            checkAndFixStep('STEP1.5', '早慶優先配分後', attributeTargets, tracker, groupTargetSizes);
+            
             // ステップ2: 属性ごとに均等配分
             addDebugLog('STEP2', '属性別配分を開始');
             allocateByAttributesEvenly(attributeTargets, tracker, groupTargetSizes);
@@ -926,6 +931,10 @@
             addDebugLog('STEP5', '最終調整を開始');
             finalAdjustment(tracker, attributeTargets, groupTargetSizes);
             
+            // ステップ6: 徹底的な最終チェックと調整
+            addDebugLog('STEP6', '最終チェックと自動調整を開始');
+            performComprehensiveFinalCheck(attributeTargets, tracker, groupTargetSizes);
+            
             // 最終確認
             performFinalCheck(attributeTargets, tracker, groupTargetSizes);
         }
@@ -933,15 +942,81 @@
         // カテゴリー分類
         function categorizeStudents() {
             return {
-                '女性理系院生': students.filter(s => s.gender === '女' && s.major === '理' && s.isGraduate),
-                '女性理系学部': students.filter(s => s.gender === '女' && s.major === '理' && !s.isGraduate),
-                '女性文系院生': students.filter(s => s.gender === '女' && s.major === '文' && s.isGraduate),
-                '女性文系学部': students.filter(s => s.gender === '女' && s.major === '文' && !s.isGraduate),
-                '男性理系院生': students.filter(s => s.gender === '男' && s.major === '理' && s.isGraduate),
-                '男性理系学部': students.filter(s => s.gender === '男' && s.major === '理' && !s.isGraduate),
-                '男性文系院生': students.filter(s => s.gender === '男' && s.major === '文' && s.isGraduate),
-                '男性文系学部': students.filter(s => s.gender === '男' && s.major === '文' && !s.isGraduate)
+                '女性理系院生': students.filter(s => !s.assigned && s.gender === '女' && s.major === '理' && s.isGraduate),
+                '女性理系学部': students.filter(s => !s.assigned && s.gender === '女' && s.major === '理' && !s.isGraduate),
+                '女性文系院生': students.filter(s => !s.assigned && s.gender === '女' && s.major === '文' && s.isGraduate),
+                '女性文系学部': students.filter(s => !s.assigned && s.gender === '女' && s.major === '文' && !s.isGraduate),
+                '男性理系院生': students.filter(s => !s.assigned && s.gender === '男' && s.major === '理' && s.isGraduate),
+                '男性理系学部': students.filter(s => !s.assigned && s.gender === '男' && s.major === '理' && !s.isGraduate),
+                '男性文系院生': students.filter(s => !s.assigned && s.gender === '男' && s.major === '文' && s.isGraduate),
+                '男性文系学部': students.filter(s => !s.assigned && s.gender === '男' && s.major === '文' && !s.isGraduate)
             };
+        }
+        
+        // 早稲田大学と慶應大学の優先配分
+        function allocatePriorityUniversities(tracker, groupTargetSizes) {
+            // 早稲田と慶應の学生を抽出
+            const wasedaStudents = students.filter(s => !s.assigned && 
+                (s.university.includes('早稲田') || s.university.includes('Waseda')));
+            const keioStudents = students.filter(s => !s.assigned && 
+                (s.university.includes('慶應') || s.university.includes('慶応') || s.university.includes('Keio')));
+            
+            // 早稲田大学の学生を均等配分
+            if (wasedaStudents.length > 0) {
+                addDebugLog('PRIORITY', `早稲田大学: ${wasedaStudents.length}名を均等配分`);
+                distributeStudentsEvenly(wasedaStudents, tracker, groupTargetSizes, '早稲田大学');
+            }
+            
+            // 慶應大学の学生を均等配分
+            if (keioStudents.length > 0) {
+                addDebugLog('PRIORITY', `慶應大学: ${keioStudents.length}名を均等配分`);
+                distributeStudentsEvenly(keioStudents, tracker, groupTargetSizes, '慶應大学');
+            }
+        }
+        
+        // 特定の学生グループを均等に配分
+        function distributeStudentsEvenly(studentGroup, tracker, groupTargetSizes, universityName) {
+            // 各グループに配分する人数を計算
+            const baseCount = Math.floor(studentGroup.length / CONFIG.groupCount);
+            const remainder = studentGroup.length % CONFIG.groupCount;
+            
+            let studentIndex = 0;
+            
+            // 各グループに基本人数を配分
+            for (let g = 0; g < CONFIG.groupCount; g++) {
+                const targetCount = baseCount + (g < remainder ? 1 : 0);
+                let placedCount = 0;
+                
+                while (placedCount < targetCount && studentIndex < studentGroup.length) {
+                    const student = studentGroup[studentIndex];
+                    
+                    if (groups[g].students.length < groupTargetSizes[g]) {
+                        // 同一学部のチェックはするが、大学重複制約は緩和
+                        const sameDept = student.department && 
+                            groups[g].students.some(s => s.university === student.university && 
+                                                       s.department === student.department);
+                        const sameName = groups[g].students.some(s => s.name === student.name);
+                        
+                        if (!sameDept && !sameName) {
+                            groups[g].students.push(student);
+                            student.assigned = true;
+                            student.groupId = g;
+                            updateTracker(student, g, tracker);
+                            placedCount++;
+                            addDebugLog('PLACED', `${student.name} (${universityName}) をグループ${g+1}に配置`);
+                        }
+                    }
+                    
+                    studentIndex++;
+                }
+            }
+            
+            // 配置できなかった学生がいる場合の処理
+            const unplacedStudents = studentGroup.filter(s => !s.assigned);
+            if (unplacedStudents.length > 0) {
+                addDebugLog('WARNING', `${universityName}: ${unplacedStudents.length}名が未配置`);
+                // 後のステップで配置される
+            }
         }
         
         // 属性別均等配分
@@ -1270,6 +1345,318 @@
             }
         }
         
+        // 徹底的な最終チェックと調整
+        function performComprehensiveFinalCheck(attributeTargets, tracker, groupTargetSizes) {
+            addDebugLog('CHECK', '徹底的な最終チェックを開始');
+            
+            let adjustmentsMade = true;
+            let iterations = 0;
+            const maxIterations = 10;
+            
+            while (adjustmentsMade && iterations < maxIterations) {
+                adjustmentsMade = false;
+                iterations++;
+                addDebugLog('CHECK', `調整ラウンド ${iterations} 開始`);
+                
+                // 1. 同姓同名チェックと修正
+                adjustmentsMade |= fixDuplicateNames();
+                
+                // 2. グループ人数の均等性チェックと修正
+                adjustmentsMade |= balanceGroupSizes(groupTargetSizes);
+                
+                // 3. 属性の均等性チェックと修正（女性、理系、院生）
+                adjustmentsMade |= balanceAttributes(['female', 'science', 'graduate']);
+                
+                // 4. 早稲田・慶應の均等性チェックと修正
+                adjustmentsMade |= balanceWasedaKeio();
+                
+                if (adjustmentsMade) {
+                    addDebugLog('CHECK', `調整ラウンド ${iterations} で修正を実施`);
+                }
+            }
+            
+            if (iterations >= maxIterations) {
+                addDebugLog('WARNING', '最大調整回数に達しました');
+            } else {
+                addDebugLog('CHECK', `${iterations}回の調整で完全に均等化されました`);
+            }
+        }
+        
+        // 同姓同名の修正
+        function fixDuplicateNames() {
+            let fixed = false;
+            
+            for (let i = 0; i < CONFIG.groupCount; i++) {
+                const nameCount = {};
+                const duplicates = [];
+                
+                groups[i].students.forEach(student => {
+                    if (nameCount[student.name]) {
+                        duplicates.push(student);
+                    } else {
+                        nameCount[student.name] = 1;
+                    }
+                });
+                
+                for (const duplicate of duplicates) {
+                    // 他のグループを探して移動
+                    for (let j = 0; j < CONFIG.groupCount; j++) {
+                        if (i === j) continue;
+                        
+                        const hasSameName = groups[j].students.some(s => s.name === duplicate.name);
+                        if (!hasSameName) {
+                            // 交換可能な学生を探す
+                            for (const candidate of groups[j].students) {
+                                if (!groups[i].students.some(s => s.name === candidate.name)) {
+                                    // 交換実行
+                                    groups[i].students = groups[i].students.filter(s => s !== duplicate);
+                                    groups[j].students = groups[j].students.filter(s => s !== candidate);
+                                    groups[i].students.push(candidate);
+                                    groups[j].students.push(duplicate);
+                                    duplicate.groupId = j;
+                                    candidate.groupId = i;
+                                    
+                                    addDebugLog('FIX', `同姓同名修正: ${duplicate.name}をグループ${i+1}から${j+1}へ`);
+                                    fixed = true;
+                                    break;
+                                }
+                            }
+                            if (fixed) break;
+                        }
+                    }
+                    if (fixed) break;
+                }
+            }
+            
+            return fixed;
+        }
+        
+        // グループ人数のバランス調整
+        function balanceGroupSizes(groupTargetSizes) {
+            let adjusted = false;
+            const sizes = [];
+            
+            for (let i = 0; i < CONFIG.groupCount; i++) {
+                sizes.push({
+                    index: i,
+                    current: groups[i].students.length,
+                    target: groupTargetSizes[i],
+                    diff: groups[i].students.length - groupTargetSizes[i]
+                });
+            }
+            
+            // 最も人数が多いグループと少ないグループを特定
+            sizes.sort((a, b) => b.diff - a.diff);
+            
+            // 2名以上の差がある場合は調整
+            if (sizes[0].diff > 0 && sizes[sizes.length - 1].diff < 0 && 
+                (sizes[0].current - sizes[sizes.length - 1].current) > 1) {
+                
+                const fromGroup = sizes[0].index;
+                const toGroup = sizes[sizes.length - 1].index;
+                
+                // 移動可能な学生を探す
+                for (const student of groups[fromGroup].students) {
+                    if (canPlaceStudent(student, groups[toGroup].students)) {
+                        // 移動実行
+                        groups[fromGroup].students = groups[fromGroup].students.filter(s => s !== student);
+                        groups[toGroup].students.push(student);
+                        student.groupId = toGroup;
+                        
+                        addDebugLog('BALANCE', `人数調整: ${student.name}をグループ${fromGroup+1}（${sizes[0].current}名）から${toGroup+1}（${sizes[sizes.length-1].current}名）へ`);
+                        adjusted = true;
+                        break;
+                    }
+                }
+            }
+            
+            return adjusted;
+        }
+        
+        // 属性のバランス調整
+        function balanceAttributes(attributes) {
+            let adjusted = false;
+            
+            for (const attr of attributes) {
+                const distribution = calculateCurrentAttributeDistribution(attr);
+                const targetDist = calculateTargetDistribution(distribution.total);
+                
+                // 最も偏っているグループを特定
+                let maxDiff = 0;
+                let fromGroup = -1;
+                let toGroup = -1;
+                
+                for (let i = 0; i < CONFIG.groupCount; i++) {
+                    const current = distribution.byGroup[i];
+                    const target = targetDist[i];
+                    const diff = current - target;
+                    
+                    if (Math.abs(diff) > 1) {
+                        for (let j = 0; j < CONFIG.groupCount; j++) {
+                            if (i === j) continue;
+                            const otherDiff = distribution.byGroup[j] - targetDist[j];
+                            if (diff > 0 && otherDiff < 0 && Math.abs(diff - otherDiff) > maxDiff) {
+                                maxDiff = Math.abs(diff - otherDiff);
+                                fromGroup = i;
+                                toGroup = j;
+                            }
+                        }
+                    }
+                }
+                
+                // 調整が必要な場合
+                if (fromGroup !== -1 && toGroup !== -1) {
+                    const moved = moveStudentByAttribute(attr, fromGroup, toGroup);
+                    if (moved) {
+                        adjusted = true;
+                        addDebugLog('BALANCE', `${getAttributeName(attr)}のバランス調整を実施`);
+                    }
+                }
+            }
+            
+            return adjusted;
+        }
+        
+        // 早稲田・慶應のバランス調整
+        function balanceWasedaKeio() {
+            let adjusted = false;
+            const universities = ['早稲田', '慶應'];
+            
+            for (const univ of universities) {
+                const distribution = calculateUniversityDistribution(univ);
+                if (distribution.total === 0) continue;
+                
+                const targetDist = calculateTargetDistribution(distribution.total);
+                
+                // 最も偏っているグループを特定
+                let maxDiff = 0;
+                let fromGroup = -1;
+                let toGroup = -1;
+                
+                for (let i = 0; i < CONFIG.groupCount; i++) {
+                    const current = distribution.byGroup[i];
+                    const target = targetDist[i];
+                    const diff = current - target;
+                    
+                    if (Math.abs(diff) > 1) {
+                        for (let j = 0; j < CONFIG.groupCount; j++) {
+                            if (i === j) continue;
+                            const otherDiff = distribution.byGroup[j] - targetDist[j];
+                            if (diff > 0 && otherDiff < 0) {
+                                maxDiff = Math.abs(diff - otherDiff);
+                                fromGroup = i;
+                                toGroup = j;
+                            }
+                        }
+                    }
+                }
+                
+                // 調整実行
+                if (fromGroup !== -1 && toGroup !== -1) {
+                    const moved = moveStudentByUniversity(univ, fromGroup, toGroup);
+                    if (moved) {
+                        adjusted = true;
+                        addDebugLog('BALANCE', `${univ}大学のバランス調整を実施`);
+                    }
+                }
+            }
+            
+            return adjusted;
+        }
+        
+        // ヘルパー関数
+        function calculateCurrentAttributeDistribution(attr) {
+            const result = { total: 0, byGroup: [] };
+            
+            for (let i = 0; i < CONFIG.groupCount; i++) {
+                let count = 0;
+                if (attr === 'female') {
+                    count = groups[i].students.filter(s => s.gender === '女').length;
+                } else if (attr === 'science') {
+                    count = groups[i].students.filter(s => s.major === '理').length;
+                } else if (attr === 'graduate') {
+                    count = groups[i].students.filter(s => s.isGraduate).length;
+                }
+                result.byGroup.push(count);
+                result.total += count;
+            }
+            
+            return result;
+        }
+        
+        function calculateUniversityDistribution(univKeyword) {
+            const result = { total: 0, byGroup: [] };
+            
+            for (let i = 0; i < CONFIG.groupCount; i++) {
+                const count = groups[i].students.filter(s => 
+                    s.university.includes(univKeyword) || 
+                    (univKeyword === '慶應' && (s.university.includes('慶応') || s.university.includes('Keio'))) ||
+                    (univKeyword === '早稲田' && s.university.includes('Waseda'))
+                ).length;
+                result.byGroup.push(count);
+                result.total += count;
+            }
+            
+            return result;
+        }
+        
+        function calculateTargetDistribution(total) {
+            const base = Math.floor(total / CONFIG.groupCount);
+            const remainder = total % CONFIG.groupCount;
+            const distribution = [];
+            
+            for (let i = 0; i < CONFIG.groupCount; i++) {
+                distribution.push(base + (i < remainder ? 1 : 0));
+            }
+            
+            return distribution;
+        }
+        
+        function moveStudentByAttribute(attr, fromGroup, toGroup) {
+            // 条件に合う学生を探す
+            for (const student of groups[fromGroup].students) {
+                let matches = false;
+                if (attr === 'female' && student.gender === '女') matches = true;
+                else if (attr === 'science' && student.major === '理') matches = true;
+                else if (attr === 'graduate' && student.isGraduate) matches = true;
+                
+                if (matches && canPlaceStudent(student, groups[toGroup].students)) {
+                    // 移動実行
+                    groups[fromGroup].students = groups[fromGroup].students.filter(s => s !== student);
+                    groups[toGroup].students.push(student);
+                    student.groupId = toGroup;
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        function moveStudentByUniversity(univKeyword, fromGroup, toGroup) {
+            for (const student of groups[fromGroup].students) {
+                if ((student.university.includes(univKeyword) || 
+                    (univKeyword === '慶應' && (student.university.includes('慶応') || student.university.includes('Keio'))) ||
+                    (univKeyword === '早稲田' && student.university.includes('Waseda'))) &&
+                    canPlaceStudent(student, groups[toGroup].students)) {
+                    
+                    // 移動実行
+                    groups[fromGroup].students = groups[fromGroup].students.filter(s => s !== student);
+                    groups[toGroup].students.push(student);
+                    student.groupId = toGroup;
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        function getAttributeName(attr) {
+            if (attr === 'female') return '女性';
+            if (attr === 'science') return '理系';
+            if (attr === 'graduate') return '院生';
+            return attr;
+        }
+        
         // 最終確認
         function performFinalCheck(attributeTargets, tracker, groupTargetSizes) {
             const finalCheck = {
@@ -1384,8 +1771,30 @@
         
         // 結果表示
         function displayResults() {
+            // 早慶の分布を計算
+            const wasedaKeioDistribution = calculateWasedaKeioDistribution();
+            
+            // 早慶分布の表示
+            let distributionHtml = '';
+            if (wasedaKeioDistribution.waseda.total > 0 || wasedaKeioDistribution.keio.total > 0) {
+                distributionHtml = '<div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #ffeaa7;">';
+                distributionHtml += '<h3 style="margin: 0 0 10px 0; color: #856404;">🏫 早稲田大学・慶應大学の分布状況</h3>';
+                
+                if (wasedaKeioDistribution.waseda.total > 0) {
+                    distributionHtml += `<p style="margin: 5px 0;">早稲田大学: 合計${wasedaKeioDistribution.waseda.total}名`;
+                    distributionHtml += ` (各グループ: ${wasedaKeioDistribution.waseda.distribution.join(', ')})</p>`;
+                }
+                
+                if (wasedaKeioDistribution.keio.total > 0) {
+                    distributionHtml += `<p style="margin: 5px 0;">慶應大学: 合計${wasedaKeioDistribution.keio.total}名`;
+                    distributionHtml += ` (各グループ: ${wasedaKeioDistribution.keio.distribution.join(', ')})</p>`;
+                }
+                
+                distributionHtml += '</div>';
+            }
+            
             // サマリー表示
-            let summaryHtml = '<div class="stats-grid">';
+            let summaryHtml = distributionHtml + '<div class="stats-grid">';
             for (let i = 0; i < CONFIG.groupCount; i++) {
                 const group = groups[i];
                 const stats = calculateGroupStats(group.students);
@@ -1402,6 +1811,30 @@
             }
             summaryHtml += '</div>';
             document.getElementById('results-summary').innerHTML = summaryHtml;
+        }
+        
+        // 早稲田・慶應の分布を計算
+        function calculateWasedaKeioDistribution() {
+            const result = {
+                waseda: { total: 0, distribution: [] },
+                keio: { total: 0, distribution: [] }
+            };
+            
+            for (let i = 0; i < CONFIG.groupCount; i++) {
+                const wasedaCount = groups[i].students.filter(s => 
+                    s.university.includes('早稲田') || s.university.includes('Waseda')
+                ).length;
+                const keioCount = groups[i].students.filter(s => 
+                    s.university.includes('慶應') || s.university.includes('慶応') || s.university.includes('Keio')
+                ).length;
+                
+                result.waseda.distribution.push(wasedaCount);
+                result.waseda.total += wasedaCount;
+                result.keio.distribution.push(keioCount);
+                result.keio.total += keioCount;
+            }
+            
+            return result;
         }
         
         // グループ統計計算
